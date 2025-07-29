@@ -1,28 +1,30 @@
-#ifndef LAZY_GIT_WATCHER_HPP
-#define LAZY_GIT_WATCHER_HPP
+#ifndef FILE_WATCHER_HPP
+#define FILE_WATCHER_HPP
 
-#pragma warning(push)
-#pragma warning(disable: 4996)
-#pragma warning(pop)
 #include <string>
-#include <efsw/efsw.hpp>
-#include "glt_ops.h"  // Corrected from "glt_ops.h" to "git_ops.hpp"
+#include <thread>
+#include <atomic>
+#include <filesystem>
+#include <wx/wx.h>
 #include <wx/textctrl.h>
+#include "glt_ops.h"
 
-class FileWatcher : public efsw::FileWatchListener {
+class FileWatcher {
 public:
-    FileWatcher(const std::string& path, GitOps& git_ops, bool commit_after_save, wxTextCtrl* log_ctrl);
-    void handleFileAction(efsw::WatchID watchid, const std::string& dir,
-        const std::string& filename, efsw::Action action,
-        std::string oldFilename) override;
-    void stop();
+    FileWatcher(const std::string& path, bool commit_after_save, GitOps& git_ops, wxTextCtrl* log_ctrl);
+    ~FileWatcher();
+    void startWatching();
+    void stopWatching();
 
 private:
-    GitOps& git_ops;
+    void watch();
+    std::string path;
     bool commit_after_save;
-    efsw::FileWatcher* watcher;
-    efsw::WatchID watch_id;
-    wxTextCtrl* logCtrl;  // Added to match the implementation in watcher.cpp
+    GitOps& git_ops;
+    wxTextCtrl* logCtrl;
+    std::thread watcher_thread;
+    std::atomic<bool> running;
+    std::filesystem::file_time_type last_modified;
 };
 
-#endif // LAZY_GIT_WATCHER_HPP
+#endif // FILE_WATCHER_HPP

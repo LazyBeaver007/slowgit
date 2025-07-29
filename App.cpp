@@ -1,261 +1,258 @@
-#include "App.h"
-#include <wx/sizer.h>
-#include "config.h"
-#include <wx/dirdlg.h>
-#include <wx/textdlg.h>
-#include <filesystem>
-#include "glt_ops.h"
-#include "watcher.h"
-#include <io.h>  
-#include <fcntl.h>  
-#include <share.h>  
-#include <nlohmann/json.hpp>
+#include "App.h" 
+#include "utils.h"
+#include <wx/txtstrm.h>
+#include <wx/stdpaths.h>
+#include <wx/url.h>
+#include <wx/uri.h>
+#include <wx/sstream.h>     // For wxStringOutputStream
+#include <wx/snglinst.h>    // For wxSingleInstanceChecker
+#include <wx/socket.h>      // For wxSocketBase, wxSocketServer, wxIPV4address
+#include <wx/protocol/http.h> // For wxHTTP
+
+#include <wx/frame.h>       // For wxFrame
+#include <wx/panel.h>       // For wxPanel
+#include <wx/sizer.h>       // For wxBoxSizer
+#include <wx/dirctrl.h>     // For wxDirPickerCtrl
+#include <wx/checkbox.h>    // For wxCheckBox
+#include <wx/textctrl.h>    // For wxTextCtrl
+#include <wx/button.h>      // For wxButton
+#include <wx/stattext.h>    // For wxStaticText
+#include <wx/log.h>         // For wxLogError, wxLogMessage
+#include <wx/fileconf.h>    // For wxFileConfig (to store access token)
+
+#include <ctime>            // For time_t, time (still needed for other potential uses)
+#include <string>           // For std::string, strcspn, std::to_string
+#include <sstream>          // For std::stringstream 
+#include <memory>           // For std::unique_ptr
+#include <algorithm>        // For std::min
+#define CURL_STATICLIB 
+#include <curl.h>
 
 
-#pragma warning(push)
-#pragma warning(disable: 4996)
-#pragma warning(pop)
+const wxString GITHUB_CLIENT_ID = "Ov23li8nV5wpQPlISDGp";
+const wxString GITHUB_CLIENT_SECRET = "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";
+const wxString GITHUB_REDIRECT_URI = "http://localhost:8080/callback";
+const wxString GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize";
+const wxString GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 
-wxIMPLEMENT_APP(LazyGitApp);
 
-bool LazyGitApp::OnInit() {
-    LazyGitFrame* frame = new LazyGitFrame("Lazy Git");
+bool App::OnInit() {
+    if (!wxSocketBase::Initialize()) {
+        wxLogError("Failed to initialize socket library.");
+        return false;
+    }
+
+    
+    wxFileConfig config("lazy-git", wxEmptyString, "lazy-git.ini");
+    accessToken = config.Read("GitHub/AccessToken", "").ToStdString();
+    if (!accessToken.empty()) {
+        logCtrl = new wxTextCtrl(nullptr, wxID_ANY, wxEmptyString); // Temporary for logging
+        logCtrl->AppendText("[" + get_timestamp() + "] Loaded GitHub access token from config.\n");
+        delete logCtrl;
+        logCtrl = nullptr;
+    }
+
+    wxSingleInstanceChecker* checker = new wxSingleInstanceChecker;
+    if (checker->IsAnotherRunning()) {
+        wxLogError("Another instance of the application is already running.");
+        delete checker;
+        return false;
+    }
+
+    frame = new wxFrame(nullptr, wxID_ANY, "lazy-git", wxDefaultPosition, wxSize(800, 600));
+    wxPanel* panel = new wxPanel(frame, wxID_ANY);
+    wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
+
+    dirPicker = new wxDirPickerCtrl(panel, wxID_ANY, wxEmptyString, "Select a folder", wxDefaultPosition, wxDefaultSize, wxDIRP_DEFAULT_STYLE | wxDIRP_DIR_MUST_EXIST);
+    sizer->Add(dirPicker, 0, wxEXPAND | wxALL, 10);
+
+    commitAfterSaveCheckBox = new wxCheckBox(panel, wxID_ANY, "Commit after save");
+    commitAfterSaveCheckBox->SetValue(true);
+    sizer->Add(commitAfterSaveCheckBox, 0, wxALL, 10);
+
+    wxBoxSizer* remoteUrlSizer = new wxBoxSizer(wxHORIZONTAL);
+    remoteUrlSizer->Add(new wxStaticText(panel, wxID_ANY, "Remote URL: "), 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
+    remoteUrlInput = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(400, -1));
+    remoteUrlSizer->Add(remoteUrlInput, 1, wxEXPAND | wxALL, 5);
+    sizer->Add(remoteUrlSizer, 0, wxEXPAND | wxALL, 10);
+
+    startStopButton = new wxButton(panel, wxID_ANY, "Start Tracking");
+    sizer->Add(startStopButton, 0, wxALIGN_CENTER | wxALL, 10);
+
+    gitHubLoginButton = new wxButton(panel, wxID_ANY, "Login with GitHub");
+    sizer->Add(gitHubLoginButton, 0, wxALIGN_CENTER | wxALL, 10);
+
+    logCtrl = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY);
+    sizer->Add(logCtrl, 1, wxEXPAND | wxALL, 10);
+
+    panel->SetSizer(sizer);
+    frame->Centre();
     frame->Show(true);
+
+    startStopButton->Bind(wxEVT_BUTTON, &App::OnToggleTracking, this);
+    gitHubLoginButton->Bind(wxEVT_BUTTON, &App::OnGitHubLogin, this);
+
+    isTracking = false;
+    watcher = nullptr;
     return true;
 }
 
-wxBEGIN_EVENT_TABLE(LazyGitFrame, wxFrame)
-EVT_BUTTON(10001, LazyGitFrame::OnInitFolder)
-EVT_BUTTON(10002, LazyGitFrame::OnConfigure)
-EVT_BUTTON(10003, LazyGitFrame::OnToggleTracking)
-wxEND_EVENT_TABLE()
+void App::OnToggleTracking(wxCommandEvent& event) {
+    if (!isTracking) {
+        wxString path = dirPicker->GetPath();
+        if (path.empty()) {
+            logCtrl->AppendText("[" + get_timestamp() + "] Please select a folder\n");
+            return;
+        }
+        repoPath = path.ToStdString();
 
-LazyGitFrame::LazyGitFrame(const wxString& title)
-    : wxFrame(nullptr, wxID_ANY, title, wxDefaultPosition, wxSize(800, 600)),
-    isTracking(false), fileWatcher(nullptr), gitOps(nullptr) {
-    wxPanel* panel = new wxPanel(this, wxID_ANY);
-    wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
-
-    initButton = new wxButton(panel, 10001, "Initialize Folder");
-    configButton = new wxButton(panel, 10002, "Configure Preferences");
-    trackButton = new wxButton(panel, 10003, "Start Tracking");
-
-    logCtrl = new wxTextCtrl(panel, wxID_ANY, "", wxDefaultPosition, wxDefaultSize,
-        wxTE_MULTILINE | wxTE_READONLY);
-
-    sizer->Add(initButton, 0, wxALL | wxEXPAND, 5);
-    sizer->Add(configButton, 0, wxALL | wxEXPAND, 5);
-    sizer->Add(trackButton, 0, wxALL | wxEXPAND, 5);
-    sizer->Add(logCtrl, 1, wxALL | wxEXPAND, 5);
-
-    panel->SetSizer(sizer);
-    Centre();
-}
-
-void LazyGitFrame::OnInitFolder(wxCommandEvent& event) {
-    logCtrl->AppendText("Initialize Folder clicked\n");
-    wxDirDialog dirDlg(this, "Select folder to initialize", "", wxDD_DEFAULT_STYLE);
-    if (dirDlg.ShowModal() != wxID_OK) return;
-
-    std::string folder_path = dirDlg.GetPath().ToStdString();
-    if (!std::filesystem::exists(folder_path + "/.git")) {
-        logCtrl->AppendText("Error: No .git folder found in " + folder_path + "\n");
-        return;
-    }
-
-    wxTextEntryDialog urlDlg(this, "Enter remote repository URL", "Remote URL");
-    if (urlDlg.ShowModal() != wxID_OK) return;
-
-    config.folder_path = folder_path;
-    config.remote_url = urlDlg.GetValue().ToStdString();
-    config.commit_after_save = true;
-    config.commit_interval_minutes = 0;
-
-    // Save config using _wsopen_s instead of std::ofstream
-    std::string config_path = folder_path + "/lazy-git.json";
-    nlohmann::json j;
-    j["folder_path"] = config.folder_path;
-    j["remote_url"] = config.remote_url;
-    j["commit_after_save"] = config.commit_after_save;
-    j["commit_interval_minutes"] = config.commit_interval_minutes;
-
-    std::string json_str = j.dump(4);
-    int fd;
-    errno_t err = _wsopen_s(&fd, wxString(config_path).ToStdWstring().c_str(),
-        _O_CREAT | _O_TRUNC | _O_WRONLY | _O_BINARY,
-        _SH_DENYNO, _S_IREAD | _S_IWRITE);
-    if (err != 0) {
-        logCtrl->AppendText("Error: Could not open file for writing: " + config_path + "\n");
-        return;
-    }
-
-    if (_write(fd, json_str.c_str(), json_str.length()) == -1) {
-        logCtrl->AppendText("Error: Could not write to file: " + config_path + "\n");
-        _close(fd);
-        return;
-    }
-
-    _close(fd);
-    logCtrl->AppendText("Initialized folder: " + folder_path + "\n");
-}
-
-ConfigDialog::ConfigDialog(wxWindow* parent, LazyGitConfig& cfg)
-    : wxDialog(parent, wxID_ANY, "Configure Preference", wxDefaultPosition, wxSize(300, 200)),
-    config(cfg) {
-    wxLogMessage("ConfigDialog created with: commit_after_save=%s, commit_interval_minutes=%d",
-        config.commit_after_save ? "true" : "false", config.commit_interval_minutes);
-
-    wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
-
-    saveCheck = new wxCheckBox(this, wxID_ANY, "Commit after each file save");
-    saveCheck->SetValue(config.commit_after_save);
-    sizer->Add(saveCheck, 0, wxALL, 10);
-
-    sizer->Add(new wxStaticText(this, wxID_ANY, "Commit every X minutes (0 to disable):"), 0, wxALL, 10);
-    intervalCtrl = new wxTextCtrl(this, wxID_ANY, std::to_string(config.commit_interval_minutes));
-    sizer->Add(intervalCtrl, 0, wxALL, 10);
-
-    wxButton* okButton = new wxButton(this, wxID_OK, "OK");
-    okButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        wxLogMessage("OK button pressed, values: commit_after_save=%s, commit_interval_minutes=%s",
-            saveCheck->GetValue() ? "true" : "false", intervalCtrl->GetValue());
-        EndModal(wxID_OK);
-        });
-
-    sizer->Add(okButton, 0, wxALL | wxALIGN_RIGHT, 10);
-
-    SetSizerAndFit(sizer);
-
-    wxLogMessage("Dialog controls set up with: saveCheck=%s, intervalCtrl=%s",
-        saveCheck->GetValue() ? "true" : "false", intervalCtrl->GetValue());
-}
-
-LazyGitConfig ConfigDialog::GetConfig() {
-    config.commit_after_save = saveCheck->GetValue();
-
-    wxString intervalStr = intervalCtrl->GetValue();
-    long interval = 0;
-    if (intervalStr.ToLong(&interval)) {
-        config.commit_interval_minutes = static_cast<int>(interval);
-    }
-
-    return config;
-}
-
-void LazyGitFrame::OnConfigure(wxCommandEvent& event) {
-    logCtrl->AppendText("Configure Preferences clicked\n");
-
-    wxDirDialog dirDlg(this, "Select your initialized project folder", "", wxDD_DEFAULT_STYLE);
-    if (dirDlg.ShowModal() != wxID_OK) {
-        logCtrl->AppendText("Configuration cancelled - no folder selected.\n");
-        return;
-    }
-
-    std::string folder_path = dirDlg.GetPath().ToStdString();
-    std::string config_path = folder_path + "/lazy-git.json";
-
-    logCtrl->AppendText("Looking for config at: " + config_path + "\n");
-
-    if (!std::filesystem::exists(config_path)) {
-        logCtrl->AppendText("Error: No config file found at " + config_path + "\n");
-        return;
-    }
-
-    config = LazyGitConfig::load(config_path);
-
-    logCtrl->AppendText("Current config values: commit_after_save=" +
-        std::string(config.commit_after_save ? "true" : "false") +
-        ", commit_interval_minutes=" + std::to_string(config.commit_interval_minutes) + "\n");
-
-    ConfigDialog dlg(this, config);
-
-    if (dlg.ShowModal() == wxID_OK) {
-        bool newCommitAfterSave = dlg.saveCheck->GetValue();
-
-        wxString intervalStr = dlg.intervalCtrl->GetValue();
-        int intervalMinutes = 0;
-        if (!intervalStr.ToInt(&intervalMinutes)) {
-            intervalMinutes = config.commit_interval_minutes;
+        remoteUrl = remoteUrlInput->GetValue().ToStdString();
+        if (remoteUrl.empty()) {
+            logCtrl->AppendText("[" + get_timestamp() + "] Please enter a remote URL\n");
+            return;
         }
 
-        logCtrl->AppendText("New config values: commit_after_save=" +
-            std::string(newCommitAfterSave ? "true" : "false") +
-            ", commit_interval_minutes=" + std::to_string(intervalMinutes) + "\n");
-
-        config.commit_after_save = newCommitAfterSave;
-        config.commit_interval_minutes = intervalMinutes;
+        if (accessToken.empty()) {
+            logCtrl->AppendText("[" + get_timestamp() + "] INFO: GitHub access token is not set. Operations requiring authentication may fail.\n");
+        }
 
         try {
-            nlohmann::json j;
-            j["folder_path"] = config.folder_path;
-            j["remote_url"] = config.remote_url;
-            j["commit_after_save"] = config.commit_after_save;
-            j["commit_interval_minutes"] = config.commit_interval_minutes;
-
-            std::string json_str = j.dump(4);
-            int fd;
-            errno_t err = _wsopen_s(&fd, wxString(config_path).ToStdWstring().c_str(),
-                _O_CREAT | _O_TRUNC | _O_WRONLY | _O_BINARY,
-                _SH_DENYNO, _S_IREAD | _S_IWRITE);
-            if (err != 0) {
-                logCtrl->AppendText("Error: Could not open file for writing: " + config_path + "\n");
-                return;
-            }
-
-            if (_write(fd, json_str.c_str(), json_str.length()) == -1) {
-                logCtrl->AppendText("Error: Could not write to file: " + config_path + "\n");
-                _close(fd);
-                return;
-            }
-
-            _close(fd);
-            logCtrl->AppendText("Configuration saved successfully to " + config_path + "\n");
+            gitOps = std::make_unique<GitOps>(repoPath, remoteUrl, logCtrl, accessToken);
+            logCtrl->AppendText("[" + get_timestamp() + "] Initial Git Logs:\n" + gitOps->get_git_logs() + "\n");
         }
         catch (const std::exception& e) {
-            logCtrl->AppendText("Error saving config: " + std::string(e.what()) + "\n");
+            logCtrl->AppendText("[" + get_timestamp() + "] Error initializing Git repository: " + std::string(e.what()) + "\n");
+            return;
         }
-    }
-}
 
-void LazyGitFrame::OnToggleTracking(wxCommandEvent& event) {
-    isTracking = !isTracking;
-    trackButton->SetLabel(isTracking ? "Stop Tracking" : "Start Tracking");
-
-    std::string config_path = config.folder_path + "/lazy-git.json";
-    if (!std::filesystem::exists(config_path)) {
-        logCtrl->AppendText("Error: No config file found. Please initialize a folder.\n");
-        isTracking = false;
-        trackButton->SetLabel("Start Tracking");
-        return;
-    }
-
-    config = LazyGitConfig::load(config_path);
-
-    if (isTracking) {
-        try {
-            gitOps = new GitOps(config.folder_path, config.remote_url, logCtrl);
-            logCtrl->AppendText("Initial Git Logs:\n" + gitOps->get_git_logs() + "\n");
-            fileWatcher = std::make_unique<FileWatcher>(config.folder_path, *gitOps, config.commit_after_save, logCtrl);
-            logCtrl->AppendText("Started tracking\n");
-        }
-        catch (const std::exception& e) {
-            logCtrl->AppendText("Error starting tracking: " + std::string(e.what()) + "\n");
-            isTracking = false;
-            trackButton->SetLabel("Start Tracking");
-            gitOps = nullptr;
-            fileWatcher.reset();
-        }
+        bool commitAfterSave = commitAfterSaveCheckBox->GetValue();
+        watcher = new FileWatcher(repoPath, commitAfterSave, *gitOps, logCtrl);
+        watcher->startWatching();
+        startStopButton->SetLabel("Stop Tracking");
+        logCtrl->AppendText("[" + get_timestamp() + "] Started tracking folder: " + repoPath + "\n");
     }
     else {
-        if (fileWatcher) {
-            fileWatcher->stop();
-            fileWatcher.reset();
+        if (watcher) {
+            watcher->stopWatching();
+            delete watcher;
+            watcher = nullptr;
         }
-        if (gitOps) {
-            logCtrl->AppendText("Final Git Logs:\n" + gitOps->get_git_logs() + "\n");
-            delete gitOps;
-            gitOps = nullptr;
-        }
-        logCtrl->AppendText("Stopped tracking\n");
+        gitOps.reset();
+        startStopButton->SetLabel("Start Tracking");
+        logCtrl->AppendText("[" + get_timestamp() + "] Stopped tracking folder\n");
     }
+    isTracking = !isTracking;
 }
+
+void App::OnGitHubLogin(wxCommandEvent& event) {
+    wxString authUrl = GITHUB_AUTH_URL + "?client_id=" + GITHUB_CLIENT_ID +
+        "&redirect_uri=" + GITHUB_REDIRECT_URI +
+        "&scope=repo user";
+
+    if (!wxLaunchDefaultBrowser(authUrl)) {
+        logCtrl->AppendText("[" + get_timestamp() + "] Failed to open browser for GitHub login.\n");
+        return;
+    }
+    logCtrl->AppendText("[" + get_timestamp() + "] Opened browser for GitHub login. Waiting for callback...\n");
+
+    wxIPV4address addr;
+    addr.Hostname("localhost");
+    addr.Service(8080);
+
+    wxSocketServer* server = new wxSocketServer(addr, wxSOCKET_NOWAIT);
+    if (!server->IsOk()) {
+        logCtrl->AppendText("[" + get_timestamp() + "] Failed to start callback server.\n");
+        delete server;
+        return;
+    }
+
+    wxSocketBase* client = server->Accept(true);
+    if (client && client->IsConnected()) {
+        char buffer[4096];
+        client->Read(buffer, sizeof(buffer) - 1);
+        buffer[client->LastCount()] = '\0';
+        std::string request(buffer);
+
+        size_t codePos = request.find("code=");
+        if (codePos != std::string::npos) {
+            size_t ampPos = request.find('&', codePos);
+            size_t spacePos = request.find(' ', codePos);
+            size_t codeEnd = request.length();
+            if (ampPos != std::string::npos) codeEnd = ampPos;
+            if (spacePos != std::string::npos && spacePos < codeEnd) codeEnd = spacePos;
+
+            std::string code = request.substr(codePos + 5, codeEnd - (codePos + 5));
+            logCtrl->AppendText("[" + get_timestamp() + "] Received authorization code.\n");
+
+            // Use libcurl to exchange code for token
+            CURL* curl = curl_easy_init();
+            if (curl) {
+                std::string postData = "client_id=" + GITHUB_CLIENT_ID.ToStdString() +
+                    "&client_secret=" + GITHUB_CLIENT_SECRET.ToStdString() +
+                    "&code=" + code +
+                    "&redirect_uri=" + GITHUB_REDIRECT_URI.ToStdString();
+
+                std::string response;
+                curl_easy_setopt(curl, CURLOPT_URL, "https://github.com/login/oauth/access_token");
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
+
+                struct curl_slist* headers = nullptr;
+                headers = curl_slist_append(headers, "Accept: application/json");
+                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+                    ((std::string*)userp)->append((char*)contents, size * nmemb);
+                    return size * nmemb;
+                    });
+                curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+                CURLcode res = curl_easy_perform(curl);
+                if (res == CURLE_OK) {
+                    logCtrl->AppendText("[" + get_timestamp() + "] GitHub token response: " + wxString(response) + "\n");
+
+                    size_t tokenStart = response.find("\"access_token\":\"");
+                    if (tokenStart != std::string::npos) {
+                        tokenStart += strlen("\"access_token\":\"");
+                        size_t tokenEnd = response.find("\"", tokenStart);
+                        if (tokenEnd != std::string::npos) {
+                            accessToken = response.substr(tokenStart, tokenEnd - tokenStart);
+                            logCtrl->AppendText("[" + get_timestamp() + "] Successfully authenticated. Token stored.\n");
+
+                            wxFileConfig config("lazy-git", wxEmptyString, "lazy-git.ini");
+                            config.Write("GitHub/AccessToken", wxString(accessToken));
+                            config.Flush();
+                        }
+                    }
+                    else {
+                        logCtrl->AppendText("[" + get_timestamp() + "] Failed to parse access token from response.\n");
+                    }
+                }
+                else {
+                    logCtrl->AppendText("[" + get_timestamp() + "] curl error: " + wxString(curl_easy_strerror(res)) + "\n");
+                }
+
+                curl_easy_cleanup(curl);
+                curl_slist_free_all(headers);
+            }
+        }
+        else {
+            logCtrl->AppendText("[" + get_timestamp() + "] No code received in callback.\n");
+        }
+
+        std::string httpResponse = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
+            "<html><head><title>Authentication Success</title></head><body><h1>Authentication Successful!</h1>"
+            "<p>You may now close this window and return to the app.</p></body></html>";
+        client->Write(httpResponse.c_str(), httpResponse.size());
+        client->Destroy();
+    }
+    else {
+        if (client) client->Destroy();
+        logCtrl->AppendText("[" + get_timestamp() + "] Failed to accept GitHub callback connection.\n");
+    }
+
+    server->Close();
+    delete server;
+}
+
+
+wxIMPLEMENT_APP(App);

@@ -1,0 +1,15 @@
+{
+    "name": "lazygit",
+    "version": "0.1.0",
+    "builtin-baseline": "f4ea42fa5c2b993cf2b75725331616999e2e34d1",
+    "dependencies": [
+        {
+            "name": "curl",
+            "version>=": "8.14.1"
+        },
+        {
+            "name": "curlcpp",
+            "version>=": "3.1"
+        }
+    ]
+}

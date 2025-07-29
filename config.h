@@ -1,20 +1,27 @@
 #pragma once
-
-#ifndef LAZY_GIT_CONFIG_HPP
-
-#define LAZY_GIT_CONFIG_HPP
+#ifndef PROJECT_CONFIG_HPP
+#define PROJECT_CONFIG_HPP
 
 #include <string>
 #include <nlohmann/json.hpp>
 
-struct LazyGitConfig
+// Defines the configuration that is specific to each project.
+struct ProjectConfig
 {
-	std::string folder_path;
-	std::string remote_url;
-	bool commit_after_save;
-	int commit_interval_minutes; //0 to disable
+    // Configuration fields for each project.
+    std::string remote_url;
+    std::string auth_token; // The GitHub OAuth token
+    static int commit_count;
+    int push_count = 0;
 
-	void save(const std::string& config_path);
-	static LazyGitConfig load(const std::string& config_path);
+    // A helper function to get the standardized path for the config file.
+    static std::string getConfigPath(const std::string& project_path);
+
+    // Saves this configuration to the project's .lazygit directory.
+    void save(const std::string& project_path);
+
+    // Loads a configuration from the project's .lazygit directory.
+    static ProjectConfig load(const std::string& project_path);
 };
-#endif // !LAZY_GIT_CONFIG_HPP
+
+#endif // !PROJECT_CONFIG_HPP

@@ -1,0 +1,1 @@
+D:\Projects\C++\lazygit\vcpkg_installed\vcpkg\blds\zlib\install-x64-windows-dbg-out.log

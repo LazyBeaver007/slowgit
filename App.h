@@ -1,53 +1,34 @@
 #ifndef LAZY_GIT_APP_HPP
 #define LAZY_GIT_APP_HPP
 
-#pragma warning(push)
-#pragma warning(disable: 4996)
-#pragma warning(pop)
-
 #include <wx/wx.h>
+#include <wx/filepicker.h>
 #include <wx/textctrl.h>
-#include <wx/button.h>
-#include "config.h"
-#include "glt_ops.h"
 #include "watcher.h"
+#include "glt_ops.h"
 
-class ConfigDialog : public wxDialog {
+class App : public wxApp {
 public:
-    ConfigDialog(wxWindow* parent, LazyGitConfig& config);
-    LazyGitConfig GetConfig();
-    wxCheckBox* saveCheck;
-    wxTextCtrl* intervalCtrl;
+    virtual bool OnInit();
+    void OnToggleTracking(wxCommandEvent& event);
+    void OnGitHubLogin(wxCommandEvent& event);  // Event handler for GitHub login
 
 private:
-    LazyGitConfig config;
-};
-
-class LazyGitFrame : public wxFrame {
-public:
-    LazyGitFrame(const wxString& title);
-
-public:
-    void OnInitFolder(wxCommandEvent& event);
-    void OnConfigure(wxCommandEvent& event);
-    void OnToggleTracking(wxCommandEvent& event);
-
+    wxFrame* frame;
+    wxDirPickerCtrl* dirPicker;
+    wxButton* startStopButton;
+    wxButton* gitHubLoginButton;  // Button for GitHub login
+    wxCheckBox* commitAfterSaveCheckBox;
+    wxTextCtrl* remoteUrlInput;
     wxTextCtrl* logCtrl;
-    wxButton* initButton;
-    wxButton* configButton;
-    wxButton* trackButton;
+    FileWatcher* watcher;
+    std::unique_ptr<GitOps> gitOps;
     bool isTracking;
-
-    LazyGitConfig config;
-    std::unique_ptr<FileWatcher> fileWatcher;
-    GitOps* gitOps;
-
-    wxDECLARE_EVENT_TABLE();
+    std::string repoPath;
+    std::string remoteUrl;
+    std::string accessToken;  // Store the OAuth access token
 };
 
-class LazyGitApp : public wxApp {
-public:
-    virtual bool OnInit() override;
-};
+DECLARE_APP(App)
 
 #endif // LAZY_GIT_APP_HPP

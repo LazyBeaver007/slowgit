@@ -1,0 +1,7 @@
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/zlib.dir
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/test.dir
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/edit_cache.dir
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/rebuild_cache.dir
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/list_install_components.dir
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/install.dir
+D:/Projects/C++/lazygit/vcpkg_installed/vcpkg/blds/zlib/x64-windows-rel/CMakeFiles/install/local.dir

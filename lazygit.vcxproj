@@ -120,9 +120,9 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\Projects\C++\lazygit\vcpkg\installed\x64-windows\include;&lt;vcpkg_path&gt;\installed\x64-windows\include;$(WXWIN)\include;$(WXWIN)\include\msvc</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Projects\C++\lazygit\curl;D:\Projects\C++\lazygit\vcpkg\installed\x64-windows\include;&lt;vcpkg_path&gt;\installed\x64-windows\include;$(WXWIN)\include;$(WXWIN)\include\msvc</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -130,8 +130,8 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>&lt;vcpkg_path&gt;\installed\x64-windows\lib;$(WXWIN)\lib\vc_x64_lib</AdditionalLibraryDirectories>
-      <AdditionalDependencies>wxmsw32u_core.lib;wxbase32u.lib;git2.lib;efsw.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\Projects\C++\lazygit\curl;&lt;vcpkg_path&gt;\installed\x64-windows\lib;$(WXWIN)\lib\vc_x64_lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>wxmsw32u_core.lib;wxbase32u.lib;git2.lib;efsw.lib;libcurl_a.lib;ws2_32.lib;wldap32.lib;crypt32.lib;Normaliz.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -139,6 +139,8 @@
     <ClCompile Include="config.cpp" />
     <ClCompile Include="glt_ops.cpp" />
     <ClCompile Include="Main.cpp" />
+    <ClCompile Include="ProjectManager.cpp" />
+    <ClCompile Include="utils.cpp" />
     <ClCompile Include="watcher.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -146,7 +148,12 @@
     <ClInclude Include="config.h" />
     <ClInclude Include="glt_ops.h" />
     <ClInclude Include="Main.h" />
+    <ClInclude Include="ProjectManager.h" />
+    <ClInclude Include="utils.h" />
     <ClInclude Include="watcher.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="vcpkg.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
